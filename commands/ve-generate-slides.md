@@ -1,0 +1,1 @@
+/home/youngwoo.jeong/.claude/skills/visual-explainer/plugins/visual-explainer/commands/generate-slides.md

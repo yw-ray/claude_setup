@@ -1,0 +1,1 @@
+/home/youngwoo.jeong/claude-slides/commands/theme-setup.md

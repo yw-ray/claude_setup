@@ -1,0 +1,6 @@
+- [PhD at NYU Tandon](user_phd_plan.md) — Planning PhD under Austin Rovinski, EDA timing closure + ML
+- [Chiplet NoI Research](project_chiplet_research.md) — Chiplet partitioning exploration (2026-04-02~03), analytical+BookSim+RL prototype
+- [NoI Topology Synthesis](project_chiplet_noi_topology.md) — Superseded: load-aware didn't consistently beat uniform in BookSim
+- [ChipletExplorer Tool](project_chiplet_explorer.md) — CURRENT: throughput+cost DSE tool, DAC/DATE target, case studies done
+- [Papers must have thesis](feedback_paper_thesis.md) — Every paper needs a clear claim, not findings list; 1→2→3→4 story structure
+- [BoostX-SDS is a commercial product](feedback_boostx_commercial.md) — BoostX-SDS research = saleable product, separate from PhD track; optimize for buyers, not venues

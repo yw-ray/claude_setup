@@ -1,0 +1,17 @@
+{
+  "outputStyle": "Explanatory",
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Glob(*)",
+      "Grep(*)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash /home/youngwoo.jeong/.claude/statusline.sh"
+  }
+}

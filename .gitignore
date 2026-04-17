@@ -1,0 +1,11 @@
+# Sensitive files
+.credentials.json
+settings.local.json
+*.env
+
+# Binary / heavy
+bin/
+dist/
+node_modules/
+__pycache__/
+*.pyc
