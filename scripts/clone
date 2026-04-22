@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# clone - Create an isolated local clone of the current repo (for agent/workspace isolation)
+# Usage: clone --suffix <suffix> | clone --pr <number> [--new --suffix <suffix>]
+# See: ~/.claude/commands/clone.md
+
+set -e
+
+CACHE_DIR=".cache"
+PR_CACHE_FILE="${CACHE_DIR}/pr_cache.json"
+GH_HOST="github.mangoboost.io"
+
+usage() {
+  echo "Usage:" >&2
+  echo "  clone --suffix <suffix>              # e.g. clone --suffix feature-testconfig-api" >&2
+  echo "  clone --pr <number>                  # path = repo-pr-<number>, checkout PR branch" >&2
+  echo "  clone --pr <number> --new --suffix <suffix>  # path = repo-<suffix>, checkout PR branch" >&2
+  echo "  clone --list                         # list clone workspaces (path, branch, last activity)" >&2
+  echo "" >&2
+  echo "Options:" >&2
+  echo "  -s, --suffix <suffix>   Path suffix (repo name becomes <repo_name>-<suffix>)" >&2
+  echo "  -p, --pr <number>       PR number; clone and checkout that PR's branch" >&2
+  echo "  -n, --new               With --pr: use --suffix for path instead of pr-<number> (requires --suffix)" >&2
+  echo "  -l, --list             List clone workspaces in parent dir (for cleanup)" >&2
+  echo "" >&2
+  echo "Run from inside the source repo. Creates a new clone in the parent directory." >&2
+  exit 1
+}
+
+# --- Resolve owner/repo for gh api (e.g. MangoBoost/mats-monorepo) ---
+get_repo_slug() {
+  local slug=""
+  if command -v gh &>/dev/null; then
+    slug=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || true
+  fi
+  if [[ -z "$slug" ]]; then
+    local url
+    url=$(git config --get remote.upstream.url 2>/dev/null) || url=$(git config --get remote.origin.url 2>/dev/null)
+    if [[ "$url" =~ (github\.com|github\.mangoboost\.io)[:/]([^/]+/[^/.]+) ]]; then
+      slug="${BASH_REMATCH[2]}"
+    fi
+  fi
+  echo "$slug"
+}
+
+ensure_pr_cache() {
+  mkdir -p "$CACHE_DIR"
+  if [[ ! -f "$PR_CACHE_FILE" ]]; then
+    echo '{}' > "$PR_CACHE_FILE"
+  fi
+}
+
+# Returns JSON: {"head":"<ref>","headRepo":"<full_name>"}
+get_pr_branch_info() {
+  local pr_number="$1"
+  local slug="$2"
+  ensure_pr_cache
+  local cached
+  cached=$(jq -r --arg pr "$pr_number" '.[$pr] // empty' "$PR_CACHE_FILE" 2>/dev/null)
+  if [[ -n "$cached" ]]; then
+    echo "$cached"
+    return
+  fi
+  local jq_query='{head: .head.ref, headRepo: .head.repo.full_name}'
+  local out
+  out=$(gh api "repos/${slug}/pulls/${pr_number}" --hostname "$GH_HOST" --jq "$jq_query" 2>/dev/null) || true
+  if [[ -z "$out" ]]; then
+    echo "clone: failed to get PR #${pr_number} (gh auth or network?)." >&2
+    exit 1
+  fi
+  local head headRepo
+  head=$(echo "$out" | jq -r '.head')
+  headRepo=$(echo "$out" | jq -r '.headRepo')
+  jq --arg pr "$pr_number" --arg head "$head" --arg headRepo "$headRepo" \
+    '.[$pr] = {head: $head, headRepo: $headRepo}' "$PR_CACHE_FILE" > "${PR_CACHE_FILE}.tmp" && mv "${PR_CACHE_FILE}.tmp" "$PR_CACHE_FILE"
+  echo "$out"
+}
+
+# Add upstream in TARGET_PATH: from source upstream, or target origin
+add_upstream() {
+  local target_path="$1"
+  local upstream_url
+  upstream_url=$(git remote get-url upstream 2>/dev/null) || true
+  if [[ -z "$upstream_url" ]]; then
+    upstream_url=$(git -C "$target_path" remote get-url origin 2>/dev/null)
+  fi
+  if [[ -n "$upstream_url" ]]; then
+    git -C "$target_path" remote add upstream "$upstream_url" 2>/dev/null || true
+  fi
+}
+
+# Palette for clone workspace color (titleBar/activityBar). Same suffix => same color.
+CLONE_COLOR_PALETTE=("#4a90d9" "#c75a4a" "#5a9e4a" "#9e6a2e" "#6b5a9e" "#2e7d8a")
+CLONE_COLOR_N=${#CLONE_COLOR_PALETTE[@]}
+
+# Return hex color for suffix (deterministic: same suffix => same color)
+get_color_for_suffix() {
+  local suffix="$1"
+  local hash=0
+  local i c
+  for ((i = 0; i < ${#suffix}; i++)); do
+    printf -v c '%d' "'${suffix:$i:1}"
+    hash=$(( (hash * 31 + c) % CLONE_COLOR_N ))
+  done
+  [[ $hash -lt 0 ]] && hash=$(( hash + CLONE_COLOR_N ))
+  echo "${CLONE_COLOR_PALETTE[$hash]}"
+}
+
+# Copy .vscode from source and merge workspace-only colorCustomizations; symlink .cursor
+setup_clone_config() {
+  local source_root="$1"
+  local target_path="$2"
+  local suffix="$3"
+  local src_vscode="${source_root}/.vscode"
+  local dst_vscode="${target_path}/.vscode"
+  local dst_settings="${dst_vscode}/settings.json"
+
+  if [[ -d "$src_vscode" && ! -L "$src_vscode" && ! -e "$dst_vscode" ]]; then
+    cp -r "$src_vscode" "$dst_vscode"
+    if [[ -f "$dst_settings" ]]; then
+      local color
+      color=$(get_color_for_suffix "$suffix")
+      if grep -q '"workbench.colorCustomizations"' "$dst_settings" 2>/dev/null; then
+        sed -i "s/\"titleBar.activeBackground\"[ ]*:[ ]*\"#[0-9a-fA-F]\{6\}\"/\"titleBar.activeBackground\": \"$color\"/g; s/\"activityBar.background\"[ ]*:[ ]*\"#[0-9a-fA-F]\{6\}\"/\"activityBar.background\": \"$color\"/g" "$dst_settings"
+      else
+        sed -i "\$ s/}[ ]*$/,\"workbench.colorCustomizations\":{\"titleBar.activeBackground\":\"$color\",\"activityBar.background\":\"$color\"}}/" "$dst_settings"
+      fi
+    fi
+  fi
+
+  local src_cursor="${source_root}/.cursor"
+  local dst_cursor="${target_path}/.cursor"
+  if [[ -d "$src_cursor" && ! -L "$src_cursor" && ! -e "$dst_cursor" ]]; then
+    ln -sn "$src_cursor" "$dst_cursor"
+  fi
+}
+
+open_cursor() {
+  local path="$1"
+  if command -v cursor &>/dev/null; then
+    cursor "$path"
+  fi
+}
+
+# List clone workspaces: path, branch, last commit date (for cleanup)
+list_clones() {
+  local parent_dir="$1"
+  local repo_name="$2"
+  local pattern="${parent_dir}/${repo_name}-*"
+  local d
+  echo "Clone workspaces (parent: $parent_dir):"
+  echo ""
+  shopt -s nullglob
+  for d in $pattern; do
+    [[ -d "$d" ]] || continue
+    local branch=""
+    local last=""
+    if git -C "$d" rev-parse --is-inside-work-tree &>/dev/null; then
+      branch=$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="?"
+      last=$(git -C "$d" log -1 --format='%ci' 2>/dev/null) || last=""
+      [[ -n "$last" ]] && last="${last%% *}"
+    fi
+    printf "  %s\n    branch: %s  last: %s\n" "$d" "${branch:--}" "${last:--}"
+  done
+  shopt -u nullglob
+}
+
+main() {
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "clone: not inside a git repository." >&2
+    exit 1
+  fi
+
+  SOURCE_TOPLEVEL=$(git rev-parse --show-toplevel)
+  REPO_NAME=$(basename "$SOURCE_TOPLEVEL")
+  PARENT_DIR=$(dirname "$SOURCE_TOPLEVEL")
+  CLONE_URL=$(git remote get-url origin 2>/dev/null) || CLONE_URL=$(git remote get-url upstream 2>/dev/null)
+  if [[ -z "$CLONE_URL" ]]; then
+    echo "clone: no remote 'origin' or 'upstream' URL." >&2
+    exit 1
+  fi
+
+  PR_NUM="" SUFFIX="" PR_NEW=false LIST=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -s|--suffix) SUFFIX="${2:?clone: --suffix requires a value}"; shift 2 ;;
+      -p|--pr)    PR_NUM="${2:?clone: --pr requires a number}"; shift 2 ;;
+      -n|--new)   PR_NEW=true; shift ;;
+      -l|--list)  LIST=true; shift ;;
+      --) shift; break ;;
+      -*) echo "clone: unknown option: $1" >&2; usage ;;
+      *)  echo "clone: unexpected argument: $1" >&2; usage ;;
+    esac
+  done
+
+  if [[ "$LIST" == true ]]; then
+    list_clones "$PARENT_DIR" "$REPO_NAME"
+    exit 0
+  fi
+  [[ $# -eq 0 ]] || { echo "clone: unexpected argument(s): $*" >&2; usage; }
+  [[ -n "$PR_NUM" ]] && { [[ "$PR_NEW" == true && -z "$SUFFIX" ]] && { echo "clone: --pr <n> --new requires --suffix." >&2; usage; }; [[ "$PR_NEW" != true ]] && SUFFIX="pr-${PR_NUM}"; }
+  [[ -n "$SUFFIX" ]] || { echo "clone: specify --suffix or --pr." >&2; usage; }
+
+  TARGET_PATH="${PARENT_DIR}/${REPO_NAME}-${SUFFIX}"
+
+  if [[ -d "$TARGET_PATH" ]]; then
+    echo "clone: already exists: $TARGET_PATH (opening in Cursor)." >&2
+    open_cursor "$TARGET_PATH"
+    exit 0
+  fi
+
+  echo "clone: cloning to $TARGET_PATH ..."
+  git clone "$CLONE_URL" "$TARGET_PATH"
+  add_upstream "$TARGET_PATH"
+  setup_clone_config "$SOURCE_TOPLEVEL" "$TARGET_PATH" "$SUFFIX"
+
+  if [[ -n "$PR_NUM" ]]; then
+    SLUG=$(get_repo_slug)
+    if [[ -z "$SLUG" ]]; then
+      echo "clone: need 'gh' and repo to resolve PR #${PR_NUM}. Opening Cursor." >&2
+      open_cursor "$TARGET_PATH"
+      exit 0
+    fi
+    if ! command -v jq &>/dev/null; then
+      echo "clone: 'jq' required for PR checkout. Install jq. Opening Cursor." >&2
+      open_cursor "$TARGET_PATH"
+      exit 0
+    fi
+    PR_INFO=$(get_pr_branch_info "$PR_NUM" "$SLUG")
+    HEAD_REF=$(echo "$PR_INFO" | jq -r '.head')
+    HEAD_REPO=$(echo "$PR_INFO" | jq -r '.headRepo')
+    FETCH_REMOTE="pr-${PR_NUM}"
+    if ! git -C "$TARGET_PATH" remote get-url "$FETCH_REMOTE" &>/dev/null; then
+      git -C "$TARGET_PATH" remote add "$FETCH_REMOTE" "https://${GH_HOST}/${HEAD_REPO}.git" 2>/dev/null || true
+    fi
+    git -C "$TARGET_PATH" fetch "$FETCH_REMOTE" "$HEAD_REF" --no-tags 2>/dev/null || true
+    if git -C "$TARGET_PATH" show-ref --quiet -- "refs/heads/${HEAD_REF}"; then
+      git -C "$TARGET_PATH" checkout "$HEAD_REF"
+    else
+      git -C "$TARGET_PATH" checkout -b "$HEAD_REF" "${FETCH_REMOTE}/${HEAD_REF}"
+    fi
+    echo "clone: checked out PR #${PR_NUM} branch '${HEAD_REF}'."
+  fi
+
+  echo "clone: done. Opening Cursor."
+  open_cursor "$TARGET_PATH"
+}
+
+main "$@"

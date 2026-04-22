@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# Global Git wrapper script to block Cursor Agent's git commands
+# This script intercepts git commands and blocks add/commit in Cursor environment
+#
+# Purpose:
+# - Prevents Cursor Agent from automatically executing git add/commit/push
+# - Forces manual git operations to be performed by the user
+# - Maintains control over git workflow and prevents unintended commits
+#
+# Installation:
+# - Copy this script to /usr/local/bin/git (requires sudo)
+# - The original git binary should be at /usr/bin/git
+# - This wrapper intercepts git commands and filters them based on CURSOR_AGENT environment
+
+# Check if this is Cursor environment
+if [[ "$CURSOR_AGENT" == "1" ]]; then
+    # "git claude"면 모든 명령 허용 (claude 제거 후 나머지 인자로 git 실행)
+    if [[ "$1" == "claude" ]]; then
+        shift
+        exec /usr/bin/git "$@"
+        exit 1
+    fi
+    # Block specific commands that could create unintended commit states or push to remote
+    if [[ "$1" == "add" ]] || [[ "$1" == "commit" ]] || [[ "$1" == "push" ]] || \
+       [[ "$1" == "tag" ]] || [[ "$1" == "merge" ]] ; then
+        echo "❌ Cursor Agent에서 git $1이 차단되었습니다."
+        echo "   수동 작업을 위해 터미널에서 직접 실행하세요."
+        exit 1
+    fi
+fi
+
+# Call real git command for all other cases
+exec /usr/bin/git "$@"

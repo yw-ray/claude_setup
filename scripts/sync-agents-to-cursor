@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# sync-agents-to-cursor - Copy ~/.claude/agents/*.md to ~/.cursor/agents/ and (on WSL) to Windows Cursor path
+# Cursor may not load subagents when .cursor/agents is a symlink. Run this after editing .claude/agents.
+# Usage: ~/.claude/scripts/sync-agents-to-cursor
+
+set -e
+
+SRC="${HOME}/.claude/agents"
+DST="${HOME}/.cursor/agents"
+# Windows Cursor config path (WSL); Cursor on Windows reads from here
+CURSOR_WIN="${CURSOR_WIN:-/mnt/c/home/sh/.cursor}"
+
+if [[ ! -d "$SRC" ]]; then
+  echo "Source not found: $SRC" >&2
+  exit 1
+fi
+
+sync_to() {
+  local dest="$1"
+  if [[ -L "$dest" ]]; then
+    echo "Removing symlink $dest (Cursor may not follow it)" >&2
+    rm "$dest"
+  fi
+  mkdir -p "$dest"
+  cp -v "$SRC"/*.md "$dest/" 2>/dev/null || true
+  echo "Synced $(ls -1 "$SRC"/*.md 2>/dev/null | wc -l) agent(s) to $dest"
+}
+
+# 1) WSL/Linux .cursor
+sync_to "$DST"
+
+# 2) Windows .cursor (when path exists, e.g. WSL)
+if [[ -n "$CURSOR_WIN" && -d "${CURSOR_WIN%/*}" ]]; then
+  sync_to "${CURSOR_WIN}/agents"
+fi

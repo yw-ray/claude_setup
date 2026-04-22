@@ -1,0 +1,10 @@
+#!/bin/bash
+# Git wrapper script for personal Claude rules repository
+# Usage: claude-git <git-command> [args...]
+# Example: claude-git status, claude-git add ., claude-git commit -m "message"
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$CLAUDE_DIR" && git "$@"
