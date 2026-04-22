@@ -2,6 +2,12 @@
 
 Personal Claude Code configuration — rules, commands, skills, memory, status line, and helper scripts.
 
+## Status Line
+
+The status line (model name, context-window %, session / weekly / model-specific rate limits, session cost) is based on **[JungHoonGhae/claude-statusline](https://github.com/JungHoonGhae/claude-statusline)**. The bundled `statusline.sh`, `statusline.conf`, `statusline-command.sh`, and `ccusage-cache.sh` are a vendored copy so this repo alone is enough to bootstrap a new machine. For newer upstream features, pull from that repo and overwrite these files.
+
+Runtime requirement: `jq` must be installed (`apt install jq` on Debian/Ubuntu, `brew install jq` on macOS). Without it, the status line falls back to `Unknown` / `0%`.
+
 ## Quick Setup
 
 ```bash
@@ -60,7 +66,7 @@ bash ~/.claude/scripts/install.sh
 | `agents/` | 5 | Code reviewer agents (neutral, critical, positive, git, PR) |
 | `skills/` | 30+ | Text-based skills (plan-eng-review, ship, investigate, etc.) |
 | `scripts/` | 6 | Helper scripts (`clone`, `sync`, `git-wrapper`, `install.sh`, etc.) |
-| `statusline.*`, `ccusage-cache.sh` | 4 | Status line renderer referenced by `settings.json` |
+| `statusline.*`, `ccusage-cache.sh` | 4 | Status line renderer (vendored from [JungHoonGhae/claude-statusline](https://github.com/JungHoonGhae/claude-statusline)) referenced by `settings.json` |
 | `memory/` | 7 | Persistent project context & user preferences (example set) |
 | `research/` | 8 | Research agent pipeline (architect, writer, reviewer, etc.) |
 
